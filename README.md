@@ -4,11 +4,15 @@
 ## features
 - custom fields
 - pagination
+- plugins
 
 ## install
 ```sh
 npm install jira-to-csv
 ```
+
+## supported plugins
+- servicedesk-lingo-integration-plugin
 
 ## usage
 ```js
@@ -25,15 +29,8 @@ const { csv } = jiraToCsv.export_issues({
     // optional parameters below
     debug_level: 10,
 
-    // custom jql (can only be provided if project parameter above is undefined)
+    // custom jql (can only be specified if project parameter above is undefined)
     jql: "...",
-
-    // process array of row objects before converting them to csv
-    onbeforeconvert: ({ rows }) => {
-      rows.forEach(row => {
-          row['Thing Count'] = row['Things'].split(",").length
-      });
-    },
 
     // only write each column if it actually contains values. default is false
     skipEmptyColumns: true,

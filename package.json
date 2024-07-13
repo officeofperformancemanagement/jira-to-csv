@@ -1,0 +1,24 @@
+{
+  "name": "jira-to-csv",
+  "version": "0.0.0",
+  "description": "Export JIRA Issues to a CSV",
+  "main": "./index.js",
+  "scripts": {
+    "format": "npx prettier --arrow-parens=avoid --print-width=180 --trailing-comma=none --write *.js",
+    "test": "node test.js"
+  },
+  "keywords": [
+    "atlassian",
+    "csv",
+    "issues",
+    "jira"
+  ],
+  "author": "Daniel J. Dufour",
+  "license": "CC0-1.0",
+  "devDependencies": {
+    "flug": "^2.8.2"
+  },
+  "dependencies": {
+    "@danieljdufour/json-to-csv": "^0.1.0"
+  }
+}

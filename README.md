@@ -13,6 +13,7 @@ npm install jira-to-csv
 
 ## supported plugins
 - servicedesk-lingo-integration-plugin
+- [timeinstatus](https://marketplace.atlassian.com/apps/1219732/time-in-status)
 
 ## usage
 ```js
@@ -37,6 +38,10 @@ const { csv } = jiraToCsv.export_issues({
 
     // how many mimilliseconds to wait between requests
     wait: 50,
+
+    // split time in status information across multiple columns
+    // each status has two columns: count and duration
+    expand_time_in_status: true
 });
 
 fs.writeFileSync("./issues.csv", csv);

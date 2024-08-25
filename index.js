@@ -4,6 +4,35 @@ const sleep = ms => new Promise(resolve => setTimeout(() => resolve(), ms));
 
 const clone = obj => JSON.parse(JSON.stringify(obj));
 
+async function get_statuses({ api_token, domain, debug_level = 0, wait = 2000, user_email }) {
+  if (typeof fetch !== "function") {
+    throw new Error("[jira-to-csv] it looks like fetch is undefined. Try upgrading NodeJS to a more recent version.");
+  }
+
+  const headers = {};
+  if (user_email && api_token) {
+    headers.Authorization = "Basic " + Buffer.from(user_email + ":" + api_token).toString("base64");
+  }
+
+  const url = domain + "/rest/api/3/status";
+  if (typeof wait === "number") {
+    if (debug_level >= 3) console.log(`[jira-to-csv] sleeping for ${wait}ms`);
+    await sleep(wait);
+  }
+
+  if (debug_level >= 3) console.log(`[jira-to-csv] fetching "${url}"`);
+  const response = await fetch(url, { headers });
+  if (debug_level >= 3) console.log(`[jira-to-csv] response.status: "${response.status}"`);
+
+  if (response.status !== 200) {
+    throw Error(`[jira-to-csv] invalid response status of ${response.status}`);
+  }
+
+  const data = await response.json();
+
+  return data;
+}
+
 async function get_fields({ api_token, custom = false, domain, debug_level = 0, max_requests = 1000, wait = 2000, user_email }) {
   if (typeof fetch !== "function") {
     throw new Error("[jira-to-csv] it looks like fetch is undefined. Try upgrading NodeJS to a more recent version.");
@@ -62,7 +91,8 @@ async function export_issues({
   jql,
   api_token,
   user_email,
-  wait = 2000, // sleep between requests
+  wait = 2000, // sleep between requests,
+  expand_time_in_status = false, // expand time in status value to multiple columns
   ...rest
 }) {
   if (typeof fetch !== "function") {
@@ -74,6 +104,28 @@ async function export_issues({
   if (user_email && api_token) {
     headers.Authorization = "Basic " + Buffer.from(user_email + ":" + api_token).toString("base64");
   }
+
+  // fetch list of custom fields
+  const { fields: custom_fields } = await get_fields({
+    api_token,
+    custom: true,
+    domain,
+    debug_level,
+    wait,
+    user_email
+  });
+
+  const statuses = await get_statuses({
+    api_token,
+    domain,
+    debug_level,
+    wait,
+    user_email
+  });
+
+  const status_by_id = Object.fromEntries(statuses.map(status => [status.id, status]));
+
+  let time_in_status_field_id = custom_fields.find(field => field.name === "[CHART] Time in Status")?.id;
 
   if (!columns) {
     columns = [
@@ -99,17 +151,8 @@ async function export_issues({
       { name: "Status Category Change Date", path: "fields.statuscategorychangedate" }
     ];
 
-    // fetch list of custom fields
-    const { fields: custom_fields } = await get_fields({
-      api_token,
-      custom: true,
-      domain,
-      debug_level,
-      wait,
-      user_email
-    });
-
-    custom_fields.forEach(({ name, id, schema }) => {
+    for (let i = 0; i < custom_fields.length; i++) {
+      const { name, id, schema } = custom_fields[i];
       if (schema.type === "user") {
         columns.push({ name: name + " Name", path: ["fields", id, "displayName"].join(".") });
         columns.push({ name: name + " Email", path: ["fields", id, "emailAddress"].join(".") });
@@ -123,10 +166,15 @@ async function export_issues({
       } else if (schema.type === "sd-request-lang" && schema.custom === "com.atlassian.servicedesk.servicedesk-lingo-integration-plugin:sd-request-language") {
         columns.push({ name: name + " Code", path: ["fields", id, "languageCode"].join(".") });
         columns.push({ name: name + " Name", path: ["fields", id, "displayName"].join(".") });
+      } else if (schema.type === "any" && schema.custom === "com.atlassian.jira.ext.charting:timeinstatus" && expand_time_in_status) {
+        statuses.forEach(status => {
+          columns.push({ name: `${name} Count: "${status.name}"`, path: ["fields", id, status.name, "count"] });
+          columns.push({ name: `${name} Duration: "${status.name}"`, path: ["fields", id, status.name, "duration"] });
+        });
       } else {
         columns.push({ name, path: "fields." + id });
       }
-    });
+    }
   }
 
   if (debug_level >= 3) console.log(`[jira-to-csv] columns:`, columns);
@@ -181,6 +229,19 @@ async function export_issues({
 
     const response_issues = response_data.issues;
 
+    // preprocess issues
+    response_issues.forEach(response_issue => {
+      if (expand_time_in_status && time_in_status_field_id && response_issue.fields[time_in_status_field_id] !== null) {
+        const time_in_status = response_issue.fields[time_in_status_field_id];
+        response_issue.fields[time_in_status_field_id] = Object.fromEntries(
+          time_in_status.split("_*|*_").map(it => {
+            const [id, count, duration] = it.split("_*:*_");
+            return [status_by_id[id].name, { count: Number(count), duration: Number(duration) }];
+          })
+        );
+      }
+    });
+
     if (debug_level >= 5) {
       console.log("[jira-to-csv] response_issues[0]:", response_issues[0]);
     }
@@ -223,5 +284,6 @@ async function export_issues({
 
 module.exports = {
   export_issues,
-  get_fields
+  get_fields,
+  get_statuses
 };

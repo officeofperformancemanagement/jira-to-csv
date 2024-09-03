@@ -41,7 +41,11 @@ const { csv } = jiraToCsv.export_issues({
 
     // split time in status information across multiple columns
     // each status has two columns: count and duration
-    expand_time_in_status: true
+    expand_time_in_status: true,
+
+    // set maximum length of issue description
+    // overflow is replaced by "..."
+    max_description_length: 100
 });
 
 fs.writeFileSync("./issues.csv", csv);

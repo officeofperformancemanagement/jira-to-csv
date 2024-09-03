@@ -1,10 +1,11 @@
 const { convert } = require("@danieljdufour/json-to-csv");
+const memoryOptimizer = require("memory-optimizer");
 
 const sleep = ms => new Promise(resolve => setTimeout(() => resolve(), ms));
 
 const clone = obj => JSON.parse(JSON.stringify(obj));
 
-async function get_statuses({ api_token, domain, debug_level = 0, wait = 2000, user_email }) {
+async function get_statuses({ api_token, domain, debug_level = 0, max_requests = 1000, wait = 2000, user_email }) {
   if (typeof fetch !== "function") {
     throw new Error("[jira-to-csv] it looks like fetch is undefined. Try upgrading NodeJS to a more recent version.");
   }
@@ -14,23 +15,40 @@ async function get_statuses({ api_token, domain, debug_level = 0, wait = 2000, u
     headers.Authorization = "Basic " + Buffer.from(user_email + ":" + api_token).toString("base64");
   }
 
-  const url = domain + "/rest/api/3/status";
-  if (typeof wait === "number") {
-    if (debug_level >= 3) console.log(`[jira-to-csv] sleeping for ${wait}ms`);
-    await sleep(wait);
+  const params = new URLSearchParams();
+
+  const url = domain + "/rest/api/3/statuses/search";
+  let startAt = 0;
+  let results = [];
+  for (let i = 0; i < max_requests; i++) {
+    if (i >= 1 && typeof wait === "number") {
+      if (debug_level >= 3) console.log(`[jira-to-csv] sleeping for ${wait}ms`);
+      await sleep(wait);
+    }
+
+    params.set("startAt", startAt);
+
+    const fetch_url = url + "?" + params.toString();
+    if (debug_level >= 3) console.log(`[jira-to-csv] fetching "${fetch_url}"`);
+    const response = await fetch(fetch_url, { headers });
+    if (debug_level >= 3) console.log(`[jira-to-csv] response.status: "${response.status}"`);
+
+    if (response.status !== 200) {
+      throw Error(`[jira-to-csv] invalid response status of ${response.status}`);
+    }
+
+    const data = await response.json();
+    if (debug_level >= 3) console.log(`[jira-to-csv] data:`, data);
+    if (data.values.length === 0) break;
+
+    results = results.concat(data.values);
+
+    startAt += data.values.length;
   }
 
-  if (debug_level >= 3) console.log(`[jira-to-csv] fetching "${url}"`);
-  const response = await fetch(url, { headers });
-  if (debug_level >= 3) console.log(`[jira-to-csv] response.status: "${response.status}"`);
+  if (debug_level >= 3) console.log(`[jira-to-csv] results:`, results);
 
-  if (response.status !== 200) {
-    throw Error(`[jira-to-csv] invalid response status of ${response.status}`);
-  }
-
-  const data = await response.json();
-
-  return data;
+  return { statuses: results };
 }
 
 async function get_fields({ api_token, custom = false, domain, debug_level = 0, max_requests = 1000, wait = 2000, user_email }) {
@@ -93,6 +111,8 @@ async function export_issues({
   user_email,
   wait = 2000, // sleep between requests,
   expand_time_in_status = false, // expand time in status value to multiple columns
+  max_description_length,
+  optimize_memory = false,
   ...rest
 }) {
   if (typeof fetch !== "function") {
@@ -115,7 +135,7 @@ async function export_issues({
     user_email
   });
 
-  const statuses = await get_statuses({
+  const { statuses } = await get_statuses({
     api_token,
     domain,
     debug_level,
@@ -166,10 +186,15 @@ async function export_issues({
       } else if (schema.type === "sd-request-lang" && schema.custom === "com.atlassian.servicedesk.servicedesk-lingo-integration-plugin:sd-request-language") {
         columns.push({ name: name + " Code", path: ["fields", id, "languageCode"].join(".") });
         columns.push({ name: name + " Name", path: ["fields", id, "displayName"].join(".") });
+      } else if (schema.type === "sd-servicelevelagreement" && schema.custom === "com.atlassian.servicedesk:sd-sla-field") {
+        columns.push({ name: name + ": Elapsed Time", path: ["fields", id, "completedCycles", "elapsedTime", "millis"] });
+        columns.push({ name: name + ": Goal Duration", path: ["fields", id, "completedCycles", "goalDuration", "millis"] });
+      } else if (schema.type === "sd-customerrequesttype" && schema.custom === "com.atlassian.servicedesk:vp-origin") {
+        columns.push({ name: name + ": Current Status", path: ["fields", id, "currentStatus", "status"] });
       } else if (schema.type === "any" && schema.custom === "com.atlassian.jira.ext.charting:timeinstatus" && expand_time_in_status) {
         statuses.forEach(status => {
-          columns.push({ name: `${name} Count: "${status.name}"`, path: ["fields", id, status.name, "count"] });
-          columns.push({ name: `${name} Duration: "${status.name}"`, path: ["fields", id, status.name, "duration"] });
+          columns.push({ name: `${name} Count: ${status.name}`, path: ["fields", id, status.name, "count"] });
+          columns.push({ name: `${name} Duration: ${status.name}`, path: ["fields", id, status.name, "duration"] });
         });
       } else {
         columns.push({ name, path: "fields." + id });
@@ -229,13 +254,27 @@ async function export_issues({
 
     const response_issues = response_data.issues;
 
+    if (optimize_memory) {
+      memoryOptimizer.optimize(response_issues);
+    }
+
+    if (typeof max_description_length === "number") {
+      response_issues.forEach(issue => {
+        if (typeof issue.fields.description === "string" && issue.fields.description.length > max_description_length) {
+          issue.fields.description = issue.fields.description.substring(0, max_description_length - 3) + "...";
+        }
+      });
+    }
+
     // preprocess issues
     response_issues.forEach(response_issue => {
       if (expand_time_in_status && time_in_status_field_id && response_issue.fields[time_in_status_field_id] !== null) {
         const time_in_status = response_issue.fields[time_in_status_field_id];
+        if (debug_level >= 5) console.log("[jira-to-csv] time_in_status:", time_in_status);
         response_issue.fields[time_in_status_field_id] = Object.fromEntries(
           time_in_status.split("_*|*_").map(it => {
             const [id, count, duration] = it.split("_*:*_");
+            if (debug_level >= 5) console.log("[jira-to-csv] id:", id);
             return [status_by_id[id].name, { count: Number(count), duration: Number(duration) }];
           })
         );
@@ -256,6 +295,10 @@ async function export_issues({
 
     all_issues = all_issues.concat(response_issues);
 
+    if (optimize_memory) {
+      memoryOptimizer.optimize(all_issues);
+    }
+
     if (typeof max_issues === "number" && max_issues !== Infinity) {
       if (all_issues.length >= max_issues) {
         all_issues = all_issues.slice(0, max_issues);
@@ -265,6 +308,8 @@ async function export_issues({
 
     startAt += response_issues.length;
   }
+
+  if (debug_level >= 5) console.warn("[jira-to-csv] memory usage:", process.memoryUsage());
 
   const csv = convert(all_issues, {
     columns,

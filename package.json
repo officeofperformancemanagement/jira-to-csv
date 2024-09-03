@@ -22,6 +22,7 @@
     "flug": "^2.8.2"
   },
   "dependencies": {
-    "@danieljdufour/json-to-csv": "^0.1.0"
+    "@danieljdufour/json-to-csv": "^0.1.0",
+    "memory-optimizer": "^0.0.1"
   }
 }

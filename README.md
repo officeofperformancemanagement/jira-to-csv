@@ -45,7 +45,13 @@ const { csv } = jiraToCsv.export_issues({
 
     // set maximum length of issue description
     // overflow is replaced by "..."
-    max_description_length: 100
+    max_description_length: 100,
+
+    // enable experimental memory optimization
+    // uses memory-optimizer internally to replace
+    // duplicate values in issue fields with
+    // multiple references to the same object
+    optimize_memory: true
 });
 
 fs.writeFileSync("./issues.csv", csv);

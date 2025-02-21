@@ -22,7 +22,8 @@
     "flug": "^2.8.2"
   },
   "dependencies": {
-    "@danieljdufour/json-to-csv": "^0.1.0",
-    "memory-optimizer": "^0.0.1"
+    "memsafe": "0.0.4",
+    "papaparse": "^5.4.1",
+    "sendero": "^0.1.1"
   }
 }
